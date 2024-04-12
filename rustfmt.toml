@@ -1,0 +1,17 @@
+binop_separator = "Back"
+brace_style = "AlwaysNextLine"
+control_brace_style = "ClosingNextLine"
+empty_item_single_line = false
+error_on_line_overflow = true
+# Can't do this, get internal errors
+# error_on_unformatted = true
+fn_params_layout = "Vertical"
+format_strings = true
+match_block_trailing_comma = true
+max_width = 120
+overflow_delimited_expr = true
+space_before_colon = true
+trailing_comma = "Never"
+trailing_semicolon = true
+use_field_init_shorthand = true
+use_small_heuristics = "Max"

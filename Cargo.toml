@@ -1,0 +1,10 @@
+[package]
+name = "txingest-receiver"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bincode = "1.3.3"
+solana-sdk = { path = "/sandbox/solana-bji-private/sdk" }
