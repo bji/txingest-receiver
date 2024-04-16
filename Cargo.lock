@@ -620,6 +620,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -643,6 +656,15 @@ name = "crossbeam-epoch"
 version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df0346b5d5e76ac2fe4e327c5fd1118d6be7c51dfb18f9b7922923f287471e35"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -1637,7 +1659,7 @@ checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
 name = "solana-frozen-abi"
-version = "1.17.30"
+version = "1.17.31"
 dependencies = [
  "ahash 0.8.5",
  "blake3",
@@ -1665,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi-macro"
-version = "1.17.30"
+version = "1.17.31"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1675,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "solana-logger"
-version = "1.17.30"
+version = "1.17.31"
 dependencies = [
  "env_logger",
  "lazy_static",
@@ -1684,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program"
-version = "1.17.30"
+version = "1.17.31"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1736,7 +1758,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sdk"
-version = "1.17.30"
+version = "1.17.31"
 dependencies = [
  "anchor-lang",
  "assert_matches",
@@ -1790,7 +1812,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sdk-macro"
-version = "1.17.30"
+version = "1.17.31"
 dependencies = [
  "bs58 0.4.0",
  "proc-macro2",
@@ -1927,6 +1949,7 @@ name = "txingest-receiver"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "crossbeam",
  "solana-sdk",
 ]
 
