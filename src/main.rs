@@ -6,6 +6,16 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
 
+// Track whether or not any tx were submitted on a QUIC connection
+
+// Then also track for every tx whether it was:
+// - Forwarded
+// - Bad Fee
+// - Fee
+
+// Need to track every tx through to either Forwarded, Bad Fee, or Fee.  Only when all have been figured out,
+// or there is some timeout
+
 // Emit lines that represent the results of QUIC connections
 
 // Logged every 100 failures or every 10 seconds for a given remote address, whichever comes first
@@ -14,18 +24,18 @@ use std::sync::Arc;
 // Logged on every start
 // timestamp started REMOTE_ADDRESS:REMOTE_PORT stake
 
-// Logged if num_vote_tx = 0, num_user_tx = 0, and num_fwd_tx = 0 after 10 seconds since started
+// Logged if num_vote_tx = 0 and num_user_tx = 0 after 10 seconds since started
 // timestamp inactive REMOTE_ADDRESS:REMOTE_PORT stake
 
 // Logged every time there are changes but no more frequently than once per 10 seconds for a given connection
-// num_user_tx is number of executed user tx; num_fwd_tx is number of tx not executed but forwarded (which can include
-//   votes)
-// timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_fwd_tx min_fee max_fee avg_fee
+// timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
 
-// Logged on every end
-// num_user_tx is number of executed user tx; num_fwd_tx is number of tx not executed but forwarded (which can include
-//   votes)
-// timestamp ended REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_fwd_tx min_fee max_fee avg_fee
+// Logged when the local peer has removed the connection to make room for others and there have been no user tx for at
+// least 10 seconds
+// timestamp pruned REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+
+// Logged when the remote peer has closed the connection and there have been no user tx for at least 10 seconds
+// timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
 
 #[derive(Default)]
 struct State
@@ -53,29 +63,59 @@ struct Failures
     pub count : u64
 }
 
-#[derive(Default)]
+enum ConnectionState
+{
+    Open,
+
+    // Pruned by local peer
+    Pruned,
+
+    // Closed by remote peer
+    Closed
+}
+
 struct Connection
 {
     pub stake : u64,
 
+    pub state : ConnectionState,
+
     // timestamp of when connection was made
     pub start_timestamp : u64,
 
-    // timestamp of most recent log
-    pub log_timestamp : u64,
-
-    // true if there have been changes since last log
-    pub changed : bool,
+    // timestamp of user tx most recently received
+    pub user_tx_timestamp : u64,
 
     // true if "inactive" was logged
     pub inactive_logged : bool,
 
+    // timestamp of most recent log
+    pub log_timestamp : u64,
+
+    // Changed since last log?
+    pub changed : bool,
+
     // Number of vote tx received
     pub vote_tx_count : u64,
 
-    // User transaction signature mapping to None if it was submitted but not executed, or mapping to Some(fee > 0) if
-    // it executed and paid a fee, or mapping to Some(0) if forwarded
-    pub txs : HashMap<Signature, Option<u64>>
+    // Number of user tx received from QUIC peer.  Note that it's possible for a user tx to be received but not
+    // determine badfee or fee for it; it's *probably* the case that it got forwarded.
+    pub user_tx_count : u64,
+
+    // Number of "bad fee" tx received
+    pub badfee_tx_count : u64,
+
+    // Number of fee paying tx received
+    pub fee_tx_count : u64,
+
+    // Minimum fee
+    pub min_fee : u64,
+
+    // Maximum fee
+    pub max_fee : u64,
+
+    // Total fees
+    pub total_fees : u64
 }
 
 fn now_millis() -> u64
@@ -98,7 +138,9 @@ impl State
     {
         self.failures.retain(|peer_addr, failures| {
             if now >= (failures.log_timestamp + 10000) {
-                println!("{now} failed {peer_addr} {}", failures.count);
+                if failures.count > 0 {
+                    println!("{now} failed {peer_addr} {}", failures.count);
+                }
                 false
             }
             else {
@@ -106,21 +148,46 @@ impl State
             }
         });
 
-        for (peer_addr, connection) in &mut self.connections {
-            if connection.changed {
-                if now >= (connection.log_timestamp + 10000) {
-                    Self::log_active_or_ended(peer_addr, connection, &"active");
+        self.connections.retain(|peer_addr, connection| {
+            match connection.state {
+                ConnectionState::Open => {
+                    if connection.changed {
+                        if now >= (connection.log_timestamp + 10000) {
+                            Self::log_active_or_ended(peer_addr, connection, &"active");
+                        }
+                    }
+                    else if !connection.inactive_logged && (now >= (connection.start_timestamp + 10000)) {
+                        println!("{now} inactive {peer_addr} {}", connection.stake);
+                        connection.inactive_logged = true;
+                    }
+                    true
+                },
+                ConnectionState::Pruned => {
+                    // Retain it if it's not been 30 seconds since the last user tx submitted.  This gives time for
+                    // all fees to be assessed.
+                    if now < (connection.user_tx_timestamp + 30000) {
+                        true
+                    }
+                    else {
+                        Self::log_active_or_ended(peer_addr, connection, &"pruned");
+                        false
+                    }
+                },
+                ConnectionState::Closed => {
+                    // Retain it if it's not been 30 seconds since the last user tx submitted.  This gives time for
+                    // all fees to be assessed.
+                    if now < (connection.user_tx_timestamp + 30000) {
+                        true
+                    }
+                    else {
+                        Self::log_active_or_ended(peer_addr, connection, &"closed");
+                        false
+                    }
                 }
             }
-            else if !connection.inactive_logged {
-                if now >= (connection.start_timestamp + 10000) {
-                    println!("{now} inactive {peer_addr} {}", connection.stake);
-                    connection.inactive_logged = true;
-                }
-            }
-        }
+        });
 
-        // Remove all txs associated whose connections have been removed
+        // Remove all txs whose connections have been removed
         self.txs.retain(|_, tx_peer_addr| self.connections.contains_key(tx_peer_addr));
     }
 
@@ -156,48 +223,25 @@ impl State
         action : &str
     )
     {
-        let now = now_millis();
-
-        // Counts user tx which actually were executed
-        let mut num_user_tx = 0;
-        // Counts user tx which were forwarded
-        let mut num_fwd_tx = 0;
-        let mut total_fees = 0;
-        let mut min_fee = u64::MAX;
-        let mut max_fee = 0;
-
-        for (_, fee) in &connection.txs {
-            match fee {
-                None => (),
-                Some(0) => {
-                    num_fwd_tx += 1;
-                },
-                Some(fee) => {
-                    num_user_tx += 1;
-                    total_fees += fee;
-                    if *fee < min_fee {
-                        min_fee = *fee;
-                    }
-                    if *fee > max_fee {
-                        max_fee = *fee;
-                    }
-                }
-            }
-        }
+        let timestamp = now_millis();
 
         let stake = connection.stake;
-        let duration = now.saturating_sub(connection.start_timestamp);
-        let num_votes = connection.vote_tx_count;
-        let min_fee = if min_fee == u64::MAX { 0 } else { min_fee };
-        let avg_fee = if num_user_tx == 0 { 0 } else { total_fees / num_user_tx };
+        let duration = timestamp.saturating_sub(connection.start_timestamp);
+        let num_vote_tx = connection.vote_tx_count;
+        let num_user_tx = connection.user_tx_count;
+        let num_badfee_tx = connection.badfee_tx_count;
+        let num_fee_tx = connection.fee_tx_count;
+        let min_fee = if connection.min_fee == u64::MAX { 0 } else { connection.min_fee };
+        let max_fee = connection.max_fee;
+        let total_fees = connection.total_fees;
 
         println!(
-            "{now} {action} {peer_addr} {stake} {duration} {num_votes} {num_user_tx} {num_fwd_tx} {min_fee} {max_fee} \
-             {avg_fee}"
+            "{timestamp} {action} {peer_addr} {stake} {duration} {num_vote_tx} {num_user_tx} {num_badfee_tx} \
+             {num_fee_tx} {min_fee} {max_fee} {total_fees}"
         );
 
         connection.changed = false;
-        connection.log_timestamp = now;
+        connection.log_timestamp = timestamp;
     }
 
     pub fn exceeded(
@@ -241,7 +285,11 @@ impl State
         self.connections.insert(peer_addr, Connection {
             stake,
 
+            state : ConnectionState::Open,
+
             start_timestamp : now,
+
+            user_tx_timestamp : 0,
 
             log_timestamp : now,
 
@@ -251,7 +299,17 @@ impl State
 
             vote_tx_count : 0,
 
-            txs : Default::default()
+            user_tx_count : 0,
+
+            badfee_tx_count : 0,
+
+            fee_tx_count : 0,
+
+            min_fee : u64::MAX,
+
+            max_fee : 0,
+
+            total_fees : 0
         });
     }
 
@@ -262,12 +320,11 @@ impl State
     )
     {
         // It's possible that stake() was not called because of lost events
-        if let Some(mut connection) = self.connections.remove(&peer_addr) {
-            Self::log_active_or_ended(&peer_addr, &mut connection, &"ended");
+        if let Some(connection) = self.connections.get_mut(&peer_addr) {
+            connection.state = ConnectionState::Pruned;
         }
     }
 
-    // Closed by remote peer, or closed by local peer after at least 2 seconds
     pub fn dropped(
         &mut self,
         _timestamp : u64,
@@ -275,8 +332,11 @@ impl State
     )
     {
         // It's possible that stake() was not called because of lost events
-        if let Some(mut connection) = self.connections.remove(&peer_addr) {
-            Self::log_active_or_ended(&peer_addr, &mut connection, &"ended");
+        if let Some(connection) = self.connections.get_mut(&peer_addr) {
+            match connection.state {
+                ConnectionState::Open => connection.state = ConnectionState::Closed,
+                _ => ()
+            }
         }
     }
 
@@ -303,13 +363,25 @@ impl State
     )
     {
         // If the connection is unknown, ignore
-        if let Some(connection) = self.connections.get_mut(&SocketAddr::new(peer_addr, peer_port)) {
-            connection.txs.insert(signature, None);
-            connection.changed = true;
+        let peer_addr = SocketAddr::new(peer_addr, peer_port);
+        if let Some(connection) = self.connections.get_mut(&peer_addr) {
+            connection.user_tx_timestamp = now_millis();
+            connection.user_tx_count += 1;
+            // If the signature is already known, ignore; all subsequent are dups
+            self.txs.entry(signature).or_insert(peer_addr);
         }
     }
 
     pub fn forwarded(
+        &mut self,
+        _timestamp : u64,
+        _signature : Signature
+    )
+    {
+        // Don't care
+    }
+
+    pub fn badfee(
         &mut self,
         _timestamp : u64,
         signature : Signature
@@ -317,19 +389,10 @@ impl State
     {
         if let Some(sender) = self.txs.get(&signature) {
             if let Some(connection) = self.connections.get_mut(sender) {
-                connection.txs.insert(signature, Some(0));
+                connection.badfee_tx_count += 1;
                 connection.changed = true;
             }
         }
-    }
-
-    pub fn badfee(
-        &self,
-        _timestamp : u64,
-        _signature : Signature
-    )
-    {
-        // Nothing to do
     }
 
     pub fn fee(
@@ -341,7 +404,14 @@ impl State
     {
         if let Some(sender) = self.txs.get(&signature) {
             if let Some(connection) = self.connections.get_mut(sender) {
-                connection.txs.insert(signature, Some(fee));
+                connection.fee_tx_count += 1;
+                if fee < connection.min_fee {
+                    connection.min_fee = fee;
+                }
+                if fee > connection.max_fee {
+                    connection.max_fee = fee;
+                }
+                connection.total_fees += fee;
                 connection.changed = true;
             }
         }
@@ -421,7 +491,7 @@ fn main()
 
     loop {
         // Receive with a timeout
-        match receiver.recv_timeout(std::time::Duration::from_millis(1000)) {
+        match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => (),
             Ok(TxIngestMsg::Exceeded { timestamp, peer_addr }) => state.exceeded(timestamp, peer_addr),
