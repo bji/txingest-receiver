@@ -2,7 +2,7 @@ use bincode::Options;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
 use solana_sdk::signature::Signature;
 use solana_sdk::txingest::TxIngestMsg;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
 
@@ -45,6 +45,10 @@ use std::sync::Arc;
 // at least 30 seconds since the most recent user tx received on the connection
 // timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
 //   num_fee_tx min_fee max_fee total_fees
+
+// Logged after a connection is complete, if it submitted any tx that were dups of tx submitted by another peer
+// before it, listing all IPs that it submitted dups of
+// timestamp dups REMOTE_ADDRESS:REMOTE_PORT REMOTE_ADDRESS ...
 
 #[derive(Default)]
 struct State
@@ -129,6 +133,9 @@ struct Connection
 
     // Number of dup tx submitted -- these are tx already submitted by a different peer
     pub dup_tx_count : u64,
+
+    // IP addresses of other peers that had already submitted tx that this submitted dups of
+    pub dup_peers : HashSet<IpAddr>,
 
     // Number of vote tx received
     pub vote_tx_count : u64,
@@ -226,6 +233,7 @@ impl State
                     }
                     else {
                         Self::log_active_or_ended(peer_addr, connection, &"dropped");
+                        Self::log_dups(peer_addr, connection);
                         false
                     }
                 },
@@ -238,6 +246,7 @@ impl State
                     }
                     else {
                         Self::log_active_or_ended(peer_addr, connection, &"closed");
+                        Self::log_dups(peer_addr, connection);
                         false
                     }
                 }
@@ -274,6 +283,33 @@ impl State
 
         connection.changed = false;
         connection.log_timestamp = timestamp;
+    }
+
+    fn log_dups(
+        peer_addr : &SocketAddr,
+        connection : &Connection
+    )
+    {
+        if connection.dup_peers.is_empty() {
+            return;
+        }
+
+        let timestamp = now_millis();
+
+        print!("{timestamp} dups {peer_addr} ");
+
+        let mut space = false;
+        for peer in &connection.dup_peers {
+            if space {
+                print!(" ");
+            }
+            else {
+                space = true;
+            }
+            print!("{}", peer);
+        }
+
+        println!("");
     }
 
     pub fn failed(
@@ -360,6 +396,8 @@ impl State
             inactive_logged : false,
 
             dup_tx_count : 0,
+
+            dup_peers : Default::default(),
 
             vote_tx_count : 0,
 
