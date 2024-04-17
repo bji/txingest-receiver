@@ -470,9 +470,10 @@ impl State
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
             connection.user_tx_timestamp = now_millis();
             connection.user_tx_count += 1;
-            if self.txs.contains_key(&signature) {
+            if let Some(already_peer) = self.txs.get(&signature) {
                 // This is a dup submitted by a different peer
                 connection.dup_tx_count += 1;
+                connection.dup_peers.insert(already_peer.ip().clone());
             }
             else {
                 self.txs.insert(signature, peer_addr);
