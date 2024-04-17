@@ -40,6 +40,8 @@ use std::sync::Arc;
 // at least 30 seconds since the most recent user tx received on the connection
 // timestamp dropped REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
 //   num_fee_tx min_fee max_fee total_fees
+// 1         2       3                          4     5        6          7           8           9             \
+//   10         11      12      13
 
 // Logged when the local peer has closed the connection (most likely to make room for new connections) and its been
 // at least 30 seconds since the most recent user tx received on the connection
@@ -118,6 +120,9 @@ struct Connection
 
     // timestamp of when connection was made
     pub start_timestamp : u64,
+
+    // timestamp of when connection was ended
+    pub end_timestamp : u64,
 
     // timestamp of user tx most recently received
     pub user_tx_timestamp : u64,
@@ -266,7 +271,7 @@ impl State
         let timestamp = now_millis();
 
         let stake = connection.stake;
-        let duration = timestamp.saturating_sub(connection.start_timestamp);
+        let duration = connection.end_timestamp.saturating_sub(connection.start_timestamp);
         let num_dup_tx = connection.dup_tx_count;
         let num_vote_tx = connection.vote_tx_count;
         let num_user_tx = connection.user_tx_count;
@@ -341,7 +346,7 @@ impl State
 
     pub fn exceeded(
         &mut self,
-        _timestamp : u64,
+        timestamp : u64,
         peer_addr : SocketAddr,
         stake : u64
     )
@@ -359,7 +364,7 @@ impl State
             exceeds.changed = true;
         }
         else if (exceeds.count == 100) || (now >= (exceeds.log_timestamp + 1000)) {
-            println!("{now} exceeded {} {stake} {}", peer_addr.ip(), exceeds.count);
+            println!("{timestamp} exceeded {} {stake} {}", peer_addr.ip(), exceeds.count);
             exceeds.log_timestamp = now;
             exceeds.changed = false;
             exceeds.count = 0;
@@ -371,25 +376,25 @@ impl State
 
     pub fn stake(
         &mut self,
-        _timestamp : u64,
+        timestamp : u64,
         peer_addr : SocketAddr,
         stake : u64
     )
     {
-        let now = now_millis();
-
-        println!("{now} started {peer_addr} {stake}");
+        println!("{timestamp} started {peer_addr} {stake}");
 
         self.connections.insert(peer_addr, Connection {
             stake,
 
             state : ConnectionState::Open,
 
-            start_timestamp : now,
+            start_timestamp : timestamp,
+
+            end_timestamp : 0,
 
             user_tx_timestamp : 0,
 
-            log_timestamp : now,
+            log_timestamp : now_millis(),
 
             changed : false,
 
@@ -417,19 +422,20 @@ impl State
 
     pub fn pruned(
         &mut self,
-        _timestamp : u64,
+        timestamp : u64,
         peer_addr : SocketAddr
     )
     {
         // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
+            connection.end_timestamp = timestamp;
             connection.state = ConnectionState::Pruned;
         }
     }
 
     pub fn closed(
         &mut self,
-        _timestamp : u64,
+        timestamp : u64,
         peer_addr : SocketAddr
     )
     {
@@ -437,7 +443,10 @@ impl State
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
             // If it was already pruned, then leave it in pruned state
             match connection.state {
-                ConnectionState::Open => connection.state = ConnectionState::Closed,
+                ConnectionState::Open => {
+                    connection.end_timestamp = timestamp;
+                    connection.state = ConnectionState::Closed;
+                },
                 _ => ()
             }
         }
@@ -459,7 +468,7 @@ impl State
 
     pub fn usertx(
         &mut self,
-        _timestamp : u64,
+        timestamp : u64,
         peer_addr : IpAddr,
         peer_port : u16,
         signature : Signature
@@ -468,7 +477,7 @@ impl State
         let peer_addr = SocketAddr::new(peer_addr, peer_port);
         // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
-            connection.user_tx_timestamp = now_millis();
+            connection.user_tx_timestamp = timestamp;
             connection.user_tx_count += 1;
             if let Some(already_peer) = self.txs.get(&signature) {
                 connection.dup_tx_count += 1;
