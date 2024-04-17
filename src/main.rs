@@ -18,8 +18,13 @@ use std::sync::Arc;
 
 // Emit lines that represent the results of QUIC connections
 
-// Logged every 100 failures or every 1 second for a given remote address, whichever comes first
+// Logged every 100 connection establishment protocol failures or every 1 second for a given remote address, whichever
+// comes first.
 // timestamp failed REMOTE_ADDRESS count
+
+// Logged every 100 connection establishment failures due to remote peer exceeding connection limits, or every 1
+// second for a given remote address, whichever comes first.
+// timestamp exceeded REMOTE_ADDRESS stake count
 
 // Logged on every start
 // timestamp started REMOTE_ADDRESS:REMOTE_PORT stake
@@ -47,6 +52,9 @@ struct State
     // Failure counts
     pub failures : HashMap<IpAddr, Failures>,
 
+    // Exceed counts
+    pub exceeds : HashMap<IpAddr, Exceeds>,
+
     // Current connections
     pub connections : HashMap<SocketAddr, Connection>,
 
@@ -67,15 +75,31 @@ struct Failures
     pub count : u64
 }
 
+#[derive(Default)]
+struct Exceeds
+{
+    // timestamp of most recent log
+    pub log_timestamp : u64,
+
+    // stake of peer
+    pub stake : u64,
+
+    // true if there have been changes since last log
+    pub changed : bool,
+
+    // Number of new failures
+    pub count : u64
+}
+
 enum ConnectionState
 {
     // Open and active
     Open,
 
-    // Closed by the tx receiver
-    Dropped,
+    // Pruned by the tx receiver
+    Pruned,
 
-    // Closed by remote per
+    // Closed by remote peer
     Closed
 }
 
@@ -161,6 +185,19 @@ impl State
             }
         });
 
+        // Remove any peer which hasn't had an exceed in at least 10 seconds, and emit one final log for those peers
+        self.exceeds.retain(|peer_addr, exceeds| {
+            if now >= (exceeds.log_timestamp + 10000) {
+                if exceeds.count > 0 {
+                    println!("{now} exceeded {peer_addr} {} {}", exceeds.stake, exceeds.count);
+                }
+                false
+            }
+            else {
+                true
+            }
+        });
+
         // Remove any connection 30 seconds after it is ended (locally or by peer) -- it is assumed that all tx that
         // were submitted over the connection have had their "results" (fee or badfee) gathered by this point and that
         // the connection is no longer interesting.
@@ -180,7 +217,7 @@ impl State
                     }
                     true
                 },
-                ConnectionState::Dropped => {
+                ConnectionState::Pruned => {
                     // Retain it if it's not been 30 seconds since the last user tx submitted.  This gives time for
                     // all fees to be assessed.  But don't retain if it never got a user tx because there's nothing
                     // left to gather for it.
@@ -211,32 +248,6 @@ impl State
         self.txs.retain(|_, tx_peer_addr| self.connections.contains_key(tx_peer_addr));
     }
 
-    fn failed(
-        &mut self,
-        peer_addr : SocketAddr
-    )
-    {
-        let now = now_millis();
-
-        let failures = self.failures.entry(peer_addr.ip().clone()).or_default();
-
-        failures.count += 1;
-
-        if failures.log_timestamp == 0 {
-            failures.log_timestamp = now;
-            failures.changed = true;
-        }
-        else if (failures.count == 100) || (now >= (failures.log_timestamp + 1000)) {
-            println!("{now} failed {} {}", peer_addr.ip(), failures.count);
-            failures.log_timestamp = now;
-            failures.changed = false;
-            failures.count = 0;
-        }
-        else {
-            failures.changed = true;
-        }
-    }
-
     fn log_active_or_ended(
         peer_addr : &SocketAddr,
         connection : &mut Connection,
@@ -265,31 +276,61 @@ impl State
         connection.log_timestamp = timestamp;
     }
 
+    pub fn failed(
+        &mut self,
+        _timestamp : u64,
+        peer_addr : SocketAddr
+    )
+    {
+        let now = now_millis();
+
+        let failures = self.failures.entry(peer_addr.ip().clone()).or_default();
+
+        failures.count += 1;
+
+        if failures.log_timestamp == 0 {
+            failures.log_timestamp = now;
+            failures.changed = true;
+        }
+        else if (failures.count == 100) || (now >= (failures.log_timestamp + 1000)) {
+            println!("{now} failed {} {}", peer_addr.ip(), failures.count);
+            failures.log_timestamp = now;
+            failures.changed = false;
+            failures.count = 0;
+        }
+        else {
+            failures.changed = true;
+        }
+    }
+
     pub fn exceeded(
         &mut self,
         _timestamp : u64,
-        peer_addr : SocketAddr
+        peer_addr : SocketAddr,
+        stake : u64
     )
     {
-        self.failed(peer_addr);
-    }
+        let now = now_millis();
 
-    pub fn disallowed(
-        &mut self,
-        _timestamp : u64,
-        peer_addr : SocketAddr
-    )
-    {
-        self.failed(peer_addr);
-    }
+        let exceeds = self.exceeds.entry(peer_addr.ip().clone()).or_default();
 
-    pub fn toomany(
-        &mut self,
-        _timestamp : u64,
-        peer_addr : SocketAddr
-    )
-    {
-        self.failed(peer_addr);
+        exceeds.stake = stake;
+
+        exceeds.count += 1;
+
+        if exceeds.log_timestamp == 0 {
+            exceeds.log_timestamp = now;
+            exceeds.changed = true;
+        }
+        else if (exceeds.count == 100) || (now >= (exceeds.log_timestamp + 1000)) {
+            println!("{now} exceeded {} {stake} {}", peer_addr.ip(), exceeds.count);
+            exceeds.log_timestamp = now;
+            exceeds.changed = false;
+            exceeds.count = 0;
+        }
+        else {
+            exceeds.changed = true;
+        }
     }
 
     pub fn stake(
@@ -336,7 +377,7 @@ impl State
         });
     }
 
-    pub fn dropped(
+    pub fn pruned(
         &mut self,
         _timestamp : u64,
         peer_addr : SocketAddr
@@ -344,7 +385,7 @@ impl State
     {
         // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
-            connection.state = ConnectionState::Dropped;
+            connection.state = ConnectionState::Pruned;
         }
     }
 
@@ -356,7 +397,11 @@ impl State
     {
         // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
-            connection.state = ConnectionState::Closed;
+            // If it was already pruned, then leave it in pruned state
+            match connection.state {
+                ConnectionState::Open => connection.state = ConnectionState::Closed,
+                _ => ()
+            }
         }
     }
 
@@ -520,11 +565,10 @@ fn main()
         match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => (),
-            Ok(TxIngestMsg::Exceeded { timestamp, peer_addr }) => state.exceeded(timestamp, peer_addr),
-            Ok(TxIngestMsg::Disallowed { timestamp, peer_addr }) => state.disallowed(timestamp, peer_addr),
-            Ok(TxIngestMsg::TooMany { timestamp, peer_addr }) => state.toomany(timestamp, peer_addr),
+            Ok(TxIngestMsg::Failed { timestamp, peer_addr }) => state.failed(timestamp, peer_addr),
+            Ok(TxIngestMsg::Exceeded { timestamp, peer_addr, stake }) => state.exceeded(timestamp, peer_addr, stake),
             Ok(TxIngestMsg::Stake { timestamp, peer_addr, stake }) => state.stake(timestamp, peer_addr, stake),
-            Ok(TxIngestMsg::Dropped { timestamp, peer_addr }) => state.dropped(timestamp, peer_addr),
+            Ok(TxIngestMsg::Pruned { timestamp, peer_addr }) => state.pruned(timestamp, peer_addr),
             Ok(TxIngestMsg::Closed { timestamp, peer_addr }) => state.closed(timestamp, peer_addr),
             Ok(TxIngestMsg::VoteTx { timestamp, peer_addr, peer_port }) => {
                 state.votetx(timestamp, peer_addr, peer_port)
