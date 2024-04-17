@@ -471,9 +471,11 @@ impl State
             connection.user_tx_timestamp = now_millis();
             connection.user_tx_count += 1;
             if let Some(already_peer) = self.txs.get(&signature) {
-                // This is a dup submitted by a different peer
                 connection.dup_tx_count += 1;
-                connection.dup_peers.insert(already_peer.ip().clone());
+                if *already_peer != peer_addr {
+                    // This is a dup submitted by a different peer
+                    connection.dup_peers.insert(already_peer.ip().clone());
+                }
             }
             else {
                 self.txs.insert(signature, peer_addr);
