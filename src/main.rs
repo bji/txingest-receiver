@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 // Emit lines that represent the results of QUIC connections
 
-// Logged every 100 failures or every 10 seconds for a given remote address, whichever comes first
+// Logged every 100 failures or every 1 second for a given remote address, whichever comes first
 // timestamp failed REMOTE_ADDRESS count
 
 // Logged on every start
@@ -28,14 +28,14 @@ use std::sync::Arc;
 // timestamp inactive REMOTE_ADDRESS:REMOTE_PORT stake
 
 // Logged every time there are changes but no more frequently than once per 10 seconds for a given connection
-// timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+// timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
 
 // Logged when the local peer has removed the connection to make room for others and there have been no user tx for at
 // least 10 seconds
-// timestamp pruned REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+// timestamp pruned REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
 
 // Logged when the remote peer has closed the connection and there have been no user tx for at least 10 seconds
-// timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+// timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
 
 #[derive(Default)]
 struct State
@@ -65,6 +65,7 @@ struct Failures
 
 enum ConnectionState
 {
+    // Open and active
     Open,
 
     // Pruned by local peer
@@ -76,8 +77,11 @@ enum ConnectionState
 
 struct Connection
 {
+    // Lamports of stake assigned to this connection (typically stake level of source, but can be altered by stake
+    // overrides)
     pub stake : u64,
 
+    // State of the connection - open or ended by local or peer
     pub state : ConnectionState,
 
     // timestamp of when connection was made
@@ -94,6 +98,9 @@ struct Connection
 
     // Changed since last log?
     pub changed : bool,
+
+    // Number of dup tx submitted -- these are tx already submitted by a different peer
+    pub dup_tx_count : u64,
 
     // Number of vote tx received
     pub vote_tx_count : u64,
@@ -130,12 +137,14 @@ impl State
         Self::default()
     }
 
-    // Do periodic work: log stuff and clean
+    // Do periodic work: log stuff and clean.  Would be better to do it all based on timers instead of periodic
+    // polling but this code isn't that sophisticated yet
     pub fn periodic(
         &mut self,
         now : u64
     )
     {
+        // Remove any peer which hasn't had a failure in at least 10 seconds, and emit one final log for those peers
         self.failures.retain(|peer_addr, failures| {
             if now >= (failures.log_timestamp + 10000) {
                 if failures.count > 0 {
@@ -148,6 +157,11 @@ impl State
             }
         });
 
+        // Remove any connection 30 seconds after it is ended (pruned or closed) -- it is assumed that all tx that
+        // were submitted over the connection have had their "results" (fee or badfee) gathered by this point and that
+        // the connection is no longer interesting.
+        // Also remove any connection which is closed but never received a tx
+        // Also log inactive on connections which are still inactive 10 seconds after they are started
         self.connections.retain(|peer_addr, connection| {
             match connection.state {
                 ConnectionState::Open => {
@@ -164,8 +178,9 @@ impl State
                 },
                 ConnectionState::Pruned => {
                     // Retain it if it's not been 30 seconds since the last user tx submitted.  This gives time for
-                    // all fees to be assessed.
-                    if now < (connection.user_tx_timestamp + 30000) {
+                    // all fees to be assessed.  But don't retain if it never got a user tx because there's nothing
+                    // left to gather for it.
+                    if (connection.user_tx_count > 0) && (now < (connection.user_tx_timestamp + 30000)) {
                         true
                     }
                     else {
@@ -175,8 +190,9 @@ impl State
                 },
                 ConnectionState::Closed => {
                     // Retain it if it's not been 30 seconds since the last user tx submitted.  This gives time for
-                    // all fees to be assessed.
-                    if now < (connection.user_tx_timestamp + 30000) {
+                    // all fees to be assessed.  But don't retain if it never got a user tx because there's nothing
+                    // left to gather for it.
+                    if (connection.user_tx_count > 0) && (now < (connection.user_tx_timestamp + 30000)) {
                         true
                     }
                     else {
@@ -206,7 +222,7 @@ impl State
             failures.log_timestamp = now;
             failures.changed = true;
         }
-        else if (failures.count == 100) || (now >= (failures.log_timestamp + 10000)) {
+        else if (failures.count == 100) || (now >= (failures.log_timestamp + 1000)) {
             println!("{now} failed {} {}", peer_addr.ip(), failures.count);
             failures.log_timestamp = now;
             failures.changed = false;
@@ -227,6 +243,7 @@ impl State
 
         let stake = connection.stake;
         let duration = timestamp.saturating_sub(connection.start_timestamp);
+        let num_dup_tx = connection.dup_tx_count;
         let num_vote_tx = connection.vote_tx_count;
         let num_user_tx = connection.user_tx_count;
         let num_badfee_tx = connection.badfee_tx_count;
@@ -236,8 +253,8 @@ impl State
         let total_fees = connection.total_fees;
 
         println!(
-            "{timestamp} {action} {peer_addr} {stake} {duration} {num_vote_tx} {num_user_tx} {num_badfee_tx} \
-             {num_fee_tx} {min_fee} {max_fee} {total_fees}"
+            "{timestamp} {action} {peer_addr} {stake} {duration} {num_dup_tx} {num_vote_tx} {num_user_tx} \
+             {num_badfee_tx} {num_fee_tx} {min_fee} {max_fee} {total_fees}"
         );
 
         connection.changed = false;
@@ -297,6 +314,8 @@ impl State
 
             inactive_logged : false,
 
+            dup_tx_count : 0,
+
             vote_tx_count : 0,
 
             user_tx_count : 0,
@@ -335,6 +354,7 @@ impl State
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
             match connection.state {
                 ConnectionState::Open => connection.state = ConnectionState::Closed,
+                // If already pruned, then leave it in that state, indicating that it was closed by the local peer
                 _ => ()
             }
         }
@@ -347,7 +367,7 @@ impl State
         peer_port : u16
     )
     {
-        // If the connection is unknown, ignore
+        // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&SocketAddr::new(peer_addr, peer_port)) {
             connection.vote_tx_count += 1;
             connection.changed = true;
@@ -362,13 +382,19 @@ impl State
         signature : Signature
     )
     {
-        // If the connection is unknown, ignore
         let peer_addr = SocketAddr::new(peer_addr, peer_port);
+        // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
             connection.user_tx_timestamp = now_millis();
             connection.user_tx_count += 1;
-            // If the signature is already known, ignore; all subsequent are dups
-            self.txs.entry(signature).or_insert(peer_addr);
+            if self.txs.contains_key(&signature) {
+                // This is a dup submitted by a different peer
+                connection.dup_tx_count += 1;
+            }
+            else {
+                self.txs.insert(signature, peer_addr);
+            }
+            connection.changed = true;
         }
     }
 
