@@ -28,14 +28,18 @@ use std::sync::Arc;
 // timestamp inactive REMOTE_ADDRESS:REMOTE_PORT stake
 
 // Logged every time there are changes but no more frequently than once per 10 seconds for a given connection
-// timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+// timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
+//   num_fee_tx min_fee max_fee total_fees
 
-// Logged when the local peer has removed the connection to make room for others and there have been no user tx for at
-// least 10 seconds
-// timestamp pruned REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+// Logged when the local peer has closed the connection (most likely to make room for new connections) and its been
+// at least 30 seconds since the most recent user tx received on the connection
+// timestamp dropped REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
+//   num_fee_tx min_fee max_fee total_fees
 
-// Logged when the remote peer has closed the connection and there have been no user tx for at least 10 seconds
-// timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx num_fee_tx min_fee max_fee total_fees
+// Logged when the local peer has closed the connection (most likely to make room for new connections) and its been
+// at least 30 seconds since the most recent user tx received on the connection
+// timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
+//   num_fee_tx min_fee max_fee total_fees
 
 #[derive(Default)]
 struct State
@@ -68,10 +72,10 @@ enum ConnectionState
     // Open and active
     Open,
 
-    // Pruned by local peer
-    Pruned,
+    // Closed by the tx receiver
+    Dropped,
 
-    // Closed by remote peer
+    // Closed by remote per
     Closed
 }
 
@@ -157,7 +161,7 @@ impl State
             }
         });
 
-        // Remove any connection 30 seconds after it is ended (pruned or closed) -- it is assumed that all tx that
+        // Remove any connection 30 seconds after it is ended (locally or by peer) -- it is assumed that all tx that
         // were submitted over the connection have had their "results" (fee or badfee) gathered by this point and that
         // the connection is no longer interesting.
         // Also remove any connection which is closed but never received a tx
@@ -176,7 +180,7 @@ impl State
                     }
                     true
                 },
-                ConnectionState::Pruned => {
+                ConnectionState::Dropped => {
                     // Retain it if it's not been 30 seconds since the last user tx submitted.  This gives time for
                     // all fees to be assessed.  But don't retain if it never got a user tx because there's nothing
                     // left to gather for it.
@@ -184,7 +188,7 @@ impl State
                         true
                     }
                     else {
-                        Self::log_active_or_ended(peer_addr, connection, &"pruned");
+                        Self::log_active_or_ended(peer_addr, connection, &"dropped");
                         false
                     }
                 },
@@ -332,18 +336,6 @@ impl State
         });
     }
 
-    pub fn pruned(
-        &mut self,
-        _timestamp : u64,
-        peer_addr : SocketAddr
-    )
-    {
-        // It's possible that stake() was not called because of lost events
-        if let Some(connection) = self.connections.get_mut(&peer_addr) {
-            connection.state = ConnectionState::Pruned;
-        }
-    }
-
     pub fn dropped(
         &mut self,
         _timestamp : u64,
@@ -352,11 +344,19 @@ impl State
     {
         // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
-            match connection.state {
-                ConnectionState::Open => connection.state = ConnectionState::Closed,
-                // If already pruned, then leave it in that state, indicating that it was closed by the local peer
-                _ => ()
-            }
+            connection.state = ConnectionState::Dropped;
+        }
+    }
+
+    pub fn closed(
+        &mut self,
+        _timestamp : u64,
+        peer_addr : SocketAddr
+    )
+    {
+        // It's possible that stake() was not called because of lost events
+        if let Some(connection) = self.connections.get_mut(&peer_addr) {
+            connection.state = ConnectionState::Closed;
         }
     }
 
@@ -524,8 +524,8 @@ fn main()
             Ok(TxIngestMsg::Disallowed { timestamp, peer_addr }) => state.disallowed(timestamp, peer_addr),
             Ok(TxIngestMsg::TooMany { timestamp, peer_addr }) => state.toomany(timestamp, peer_addr),
             Ok(TxIngestMsg::Stake { timestamp, peer_addr, stake }) => state.stake(timestamp, peer_addr, stake),
-            Ok(TxIngestMsg::Pruned { timestamp, peer_addr }) => state.pruned(timestamp, peer_addr),
             Ok(TxIngestMsg::Dropped { timestamp, peer_addr }) => state.dropped(timestamp, peer_addr),
+            Ok(TxIngestMsg::Closed { timestamp, peer_addr }) => state.closed(timestamp, peer_addr),
             Ok(TxIngestMsg::VoteTx { timestamp, peer_addr, peer_port }) => {
                 state.votetx(timestamp, peer_addr, peer_port)
             },
