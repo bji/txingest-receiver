@@ -296,7 +296,7 @@ impl State
 
         let timestamp = now_millis();
 
-        print!("{timestamp} dups {peer_addr} ");
+        print!("{timestamp} dups {} ", peer_addr.ip());
 
         let mut space = false;
         for peer in &connection.dup_peers {
