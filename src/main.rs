@@ -383,7 +383,11 @@ impl State
     {
         println!("{timestamp} started {peer_addr} {stake}");
 
-        self.connections.insert(peer_addr, Connection {
+        // Currently the validator can send multiple stake events per QUIC connection.  It is not clear how or why
+        // this happens.  These events should only be sent when a new QUIC connection is established; but they are
+        // sent for the same SocketAddr multiple times in a row.  For the time being, just ignore all the extra ones.
+
+        self.connections.entry(peer_addr).or_insert_with(|| Connection {
             stake,
 
             state : ConnectionState::Open,
