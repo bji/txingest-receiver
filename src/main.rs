@@ -468,6 +468,7 @@ impl State
 
     pub fn usertx(
         &mut self,
+        show_tx : bool,
         timestamp : u64,
         peer_addr : IpAddr,
         peer_port : u16,
@@ -475,6 +476,11 @@ impl State
     )
     {
         let peer_addr = SocketAddr::new(peer_addr, peer_port);
+
+        if show_tx {
+            println!("{timestamp} tx {peer_addr}:{peer_port} {signature}");
+        }
+
         // It's possible that stake() was not called because of lost events
         if let Some(connection) = self.connections.get_mut(&peer_addr) {
             connection.user_tx_timestamp = timestamp;
@@ -537,6 +543,31 @@ impl State
             }
         }
     }
+
+    pub fn will_be_leader(
+        &self,
+        timestamp : u64,
+        slots : u8
+    )
+    {
+        println!("{timestamp} leader_upcoming {slots}");
+    }
+
+    pub fn begin_leader(
+        &self,
+        timestamp : u64
+    )
+    {
+        println!("{timestamp} leader_begin");
+    }
+
+    pub fn end_leader(
+        &self,
+        timestamp : u64
+    )
+    {
+        println!("{timestamp} leader_end");
+    }
 }
 
 fn main()
@@ -545,18 +576,27 @@ fn main()
 
     let input_args = std::env::args().skip(1).collect::<Vec<String>>();
 
-    if input_args.len() != 2 {
-        eprintln!("ERROR: Incorrect number of arguments: must be: <LISTEN_ADDRESS> <LISTEN_PORT>");
+    if (input_args.len() < 2) || (input_args.len() > 3) {
+        eprintln!("ERROR: Incorrect number of arguments: must be: [--show_tx] <LISTEN_ADDRESS> <LISTEN_PORT>");
         std::process::exit(-1);
     }
 
-    let addr = input_args[0]
-        .parse::<Ipv4Addr>()
-        .unwrap_or_else(|e| error_exit(format!("ERROR: Invalid listen address {}: {e}", input_args[0])));
+    let mut idx = 0;
 
-    let port = input_args[1]
+    let mut show_tx = false;
+
+    if input_args[0] == "--show_tx" {
+        show_tx = true;
+        idx = 1;
+    }
+
+    let addr = input_args[idx]
+        .parse::<Ipv4Addr>()
+        .unwrap_or_else(|e| error_exit(format!("ERROR: Invalid listen address {}: {e}", input_args[idx])));
+
+    let port = input_args[idx + 1]
         .parse::<u16>()
-        .unwrap_or_else(|e| error_exit(format!("ERROR: Invalid listen port {}: {e}", input_args[1])));
+        .unwrap_or_else(|e| error_exit(format!("ERROR: Invalid listen port {}: {e}", input_args[idx + 1])));
 
     // Listen
     let tcp_listener = loop {
@@ -624,11 +664,14 @@ fn main()
                 state.votetx(timestamp, peer_addr, peer_port)
             },
             Ok(TxIngestMsg::UserTx { timestamp, peer_addr, peer_port, signature }) => {
-                state.usertx(timestamp, peer_addr, peer_port, signature)
+                state.usertx(show_tx, timestamp, peer_addr, peer_port, signature)
             },
             Ok(TxIngestMsg::Forwarded { timestamp, signature }) => state.forwarded(timestamp, signature),
             Ok(TxIngestMsg::BadFee { timestamp, signature }) => state.badfee(timestamp, signature),
-            Ok(TxIngestMsg::Fee { timestamp, signature, fee }) => state.fee(timestamp, signature, fee)
+            Ok(TxIngestMsg::Fee { timestamp, signature, fee }) => state.fee(timestamp, signature, fee),
+            Ok(TxIngestMsg::WillBeLeader { timestamp, slots }) => state.will_be_leader(timestamp, slots),
+            Ok(TxIngestMsg::BeginLeader { timestamp }) => state.begin_leader(timestamp),
+            Ok(TxIngestMsg::EndLeader { timestamp }) => state.end_leader(timestamp)
         }
 
         let now = now_millis();
