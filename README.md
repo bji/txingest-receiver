@@ -181,21 +181,21 @@ The following lines are logged:
      the addresses of the peers that also submitted the same tx.
      ```<REMOTE_ADDRESS>```... is a space-separated list of those addresses.
 
-```<TIMESTAMP tx <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE>```
+```<TIMESTAMP> tx <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE>```
   - Only if ```--vote_tx``` was specified, these lines are logged.  They
      give the signature of transactions received on a QUIC connection by
      a given remote peer.
 
-```<TIMESTAMP leader_upcoming <SLOTS>```
+```<TIMESTAMP> leader_upcoming <SLOTS>```
   - Starting at 200 slots before a validator's upcoming leader slots, logs once
     per leader slot about the leader's slots being upcoming.  Only logs for
     200 ... 2 slots (doesn't log when the leader's slots are 1 slot away, for
     technical reasons)
     
-```<TIMESTAMP leader_begin```
+```<TIMESTAMP> leader_begin```
   - Logged when the validator's leader slots have begun
     
-```<TIMESTAMP leader_end```
+```<TIMESTAMP> leader_end```
   - Logged when the validator's leader slots have ended
 
 
