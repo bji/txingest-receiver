@@ -3,7 +3,7 @@
 This implements a simple txingest receiver.  In order to function, it requires that a Solana validator
 be patched with the txingest patch; see:
 
-https://github.com/bji/solana/tree/v1.17.30_txingest
+https://github.com/bji/solana/tree/v1.17.31_txingest
 
 This simple receiver will listen for connections the validator on a given port, and when connected
 to, receive events from the validator, collate them, and log details about QUIC connections and
