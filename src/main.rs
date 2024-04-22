@@ -32,21 +32,27 @@ use std::sync::Arc;
 // Logged if num_vote_tx = 0 and num_user_tx = 0 after 10 seconds since started
 // timestamp inactive REMOTE_ADDRESS:REMOTE_PORT stake
 
-// Logged every time there are changes but no more frequently than once per 10 seconds for a given connection
+// Logged every time there are changes but no more frequently than once per 10 seconds for a given connection.
+// The letter 'p' is logged in the 14th position if the connection is partial (i.e. was started before the receiver
+// was started), and 'c' is logged there if the connection is complete (i.e. started after the receiver was started)
 // timestamp active REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
-//   num_fee_tx min_fee max_fee total_fees
+//   num_fee_tx min_fee max_fee total_fees <p_or_c>
 
 // Logged when the local peer has closed the connection (most likely to make room for new connections) and its been
 // at least 30 seconds since the most recent user tx received on the connection
+// The letter 'p' is logged in the 14th position if the connection is partial (i.e. was started before the receiver
+// was started), and 'c' is logged there if the connection is complete (i.e. started after the receiver was started)
 // timestamp dropped REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
-//   num_fee_tx min_fee max_fee total_fees
+//   num_fee_tx min_fee max_fee total_fees <p_or_c>
 // 1         2       3                          4     5        6          7           8           9             \
-//   10         11      12      13
+//   10         11      12      13         14
 
 // Logged when the local peer has closed the connection (most likely to make room for new connections) and its been
 // at least 30 seconds since the most recent user tx received on the connection
+// The letter 'p' is logged in the 14th position if the connection is partial (i.e. was started before the receiver
+// was started), and 'c' is logged there if the connection is complete (i.e. started after the receiver was started)
 // timestamp closed REMOTE_ADDRESS:REMOTE_PORT stake duration num_dup_tx num_vote_tx num_user_tx num_badfee_tx \
-//   num_fee_tx min_fee max_fee total_fees
+//   num_fee_tx min_fee max_fee total_fees <p_or_c>
 
 // Logged after a connection is complete, if it submitted any tx that were dups of tx submitted by another peer
 // before it, listing all IPs that it submitted dups of
@@ -97,9 +103,11 @@ struct Exceeds
     pub count : u64
 }
 
+#[derive(Default)]
 enum ConnectionState
 {
     // Open and active
+    #[default]
     Open,
 
     // Pruned by the tx receiver
@@ -109,8 +117,13 @@ enum ConnectionState
     Closed
 }
 
+#[derive(Default)]
 struct Connection
 {
+    // Was this connection created without having seen a "started" event?  This implies that the connection was made
+    // before the receiver was connected to, so some events related to the connection were likely lost
+    pub is_partial : bool,
+
     // Lamports of stake assigned to this connection (typically stake level of source, but can be altered by stake
     // overrides)
     pub stake : u64,
@@ -163,6 +176,30 @@ struct Connection
 
     // Total fees
     pub total_fees : u64
+}
+
+impl Connection
+{
+    pub fn new(
+        stake : Option<u64>,
+        start_timestamp : u64,
+        log_timestamp : u64
+    ) -> Self
+    {
+        Self {
+            is_partial : stake.is_none(),
+
+            stake : stake.unwrap_or(0),
+
+            start_timestamp,
+
+            log_timestamp,
+
+            min_fee : u64::MAX,
+
+            ..Connection::default()
+        }
+    }
 }
 
 fn now_millis() -> u64
@@ -283,7 +320,8 @@ impl State
 
         println!(
             "{timestamp} {action} {peer_addr} {stake} {duration} {num_dup_tx} {num_vote_tx} {num_user_tx} \
-             {num_badfee_tx} {num_fee_tx} {min_fee} {max_fee} {total_fees}"
+             {num_badfee_tx} {num_fee_tx} {min_fee} {max_fee} {total_fees} {}",
+            if connection.is_partial { "p" } else { "c" }
         );
 
         connection.changed = false;
@@ -386,42 +424,15 @@ impl State
         // Currently the validator can send multiple stake events per QUIC connection.  It is not clear how or why
         // this happens.  These events should only be sent when a new QUIC connection is established; but they are
         // sent for the same SocketAddr multiple times in a row.  For the time being, just ignore all the extra ones.
-
-        self.connections.entry(peer_addr).or_insert_with(|| Connection {
-            stake,
-
-            state : ConnectionState::Open,
-
-            start_timestamp : timestamp,
-
-            end_timestamp : 0,
-
-            user_tx_timestamp : 0,
-
-            log_timestamp : now_millis(),
-
-            changed : false,
-
-            inactive_logged : false,
-
-            dup_tx_count : 0,
-
-            dup_peers : Default::default(),
-
-            vote_tx_count : 0,
-
-            user_tx_count : 0,
-
-            badfee_tx_count : 0,
-
-            fee_tx_count : 0,
-
-            min_fee : u64::MAX,
-
-            max_fee : 0,
-
-            total_fees : 0
-        });
+        if let Some(connection) = self.connections.get_mut(&peer_addr) {
+            // If the connection was partial, then update its stake
+            if connection.is_partial {
+                connection.stake = stake;
+            }
+        }
+        else {
+            self.connections.insert(peer_addr, Connection::new(Some(stake), timestamp, now_millis()));
+        }
     }
 
     pub fn pruned(
@@ -464,10 +475,12 @@ impl State
     )
     {
         // It's possible that stake() was not called because of lost events
-        if let Some(connection) = self.connections.get_mut(&SocketAddr::new(peer_addr, peer_port)) {
-            connection.vote_tx_count += 1;
-            connection.changed = true;
-        }
+        let connection = self.connections.entry(SocketAddr::new(peer_addr, peer_port)).or_insert_with(|| {
+            let now = now_millis();
+            Connection::new(None, now, now)
+        });
+        connection.vote_tx_count += 1;
+        connection.changed = true;
     }
 
     pub fn usertx(
@@ -485,22 +498,24 @@ impl State
             println!("{timestamp} tx {peer_addr}:{peer_port} {signature}");
         }
 
-        // It's possible that stake() was not called because of lost events
-        if let Some(connection) = self.connections.get_mut(&peer_addr) {
-            connection.user_tx_timestamp = timestamp;
-            connection.user_tx_count += 1;
-            if let Some(already_peer) = self.txs.get(&signature) {
-                connection.dup_tx_count += 1;
-                if *already_peer != peer_addr {
-                    // This is a dup submitted by a different peer
-                    connection.dup_peers.insert(already_peer.ip().clone());
-                }
+        // It's possible that stake() was not called because of lost events; in that case, stake will not be known
+        let connection = self.connections.entry(peer_addr.clone()).or_insert_with(|| {
+            let now = now_millis();
+            Connection::new(None, now, now)
+        });
+        connection.user_tx_timestamp = timestamp;
+        connection.user_tx_count += 1;
+        if let Some(already_peer) = self.txs.get(&signature) {
+            connection.dup_tx_count += 1;
+            if *already_peer != peer_addr {
+                // This is a dup submitted by a different peer
+                connection.dup_peers.insert(already_peer.ip().clone());
             }
-            else {
-                self.txs.insert(signature, peer_addr);
-            }
-            connection.changed = true;
         }
+        else {
+            self.txs.insert(signature, peer_addr);
+        }
+        connection.changed = true;
     }
 
     pub fn forwarded(
@@ -519,10 +534,12 @@ impl State
     )
     {
         if let Some(sender) = self.txs.get(&signature) {
-            if let Some(connection) = self.connections.get_mut(sender) {
-                connection.badfee_tx_count += 1;
-                connection.changed = true;
-            }
+            let connection = self.connections.entry(sender.clone()).or_insert_with(|| {
+                let now = now_millis();
+                Connection::new(None, now, now)
+            });
+            connection.badfee_tx_count += 1;
+            connection.changed = true;
         }
     }
 
@@ -534,17 +551,19 @@ impl State
     )
     {
         if let Some(sender) = self.txs.get(&signature) {
-            if let Some(connection) = self.connections.get_mut(sender) {
-                connection.fee_tx_count += 1;
-                if fee < connection.min_fee {
-                    connection.min_fee = fee;
-                }
-                if fee > connection.max_fee {
-                    connection.max_fee = fee;
-                }
-                connection.total_fees += fee;
-                connection.changed = true;
+            let connection = self.connections.entry(sender.clone()).or_insert_with(|| {
+                let now = now_millis();
+                Connection::new(None, now, now)
+            });
+            connection.fee_tx_count += 1;
+            if fee < connection.min_fee {
+                connection.min_fee = fee;
             }
+            if fee > connection.max_fee {
+                connection.max_fee = fee;
+            }
+            connection.total_fees += fee;
+            connection.changed = true;
         }
     }
 
