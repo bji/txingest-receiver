@@ -23,6 +23,11 @@ If a validator uses JITO, then it should run its own relayer, and should also mo
 JITO relayer to utilize txingest.  This will allow the JITO relayer to deliver events about
 QUIC connections, since the JITO relayer is the QUIC endpoint that tx sources connect to.
 
+The JITO relayer should be updated to use txingest.  The following branch contains the
+change necessary to enable the JITO relayer to use txingest:
+
+https://github.com/bji/jito-relayer/tree/v0.1.12_txingest
+
 When JITO is used with txingest:
 
 - The JITO relayer receives QUIC connections and sends events about the connections and tx
