@@ -49,15 +49,15 @@ When a validator does NOT use JITO but does use txingest:
 
 Call with either two arguments:
 
-```  txingest <LISTEN_ADDRESS> <PORT>```
+```  txingest-receiver <LISTEN_ADDRESS> <PORT>```
 
 Or three arguments:
 
-```  txingest --show_tx <LISTEN_ADDRESS> <PORT>```
+```  txingest-receiver --show_tx <LISTEN_ADDRESS> <PORT>```
 
 Typically this would be run on the validator itself, and would be run like so:
 
-```  txingest 127.0.0.1 25555```
+```  txingest-receiver 127.0.0.1 25555```
 
 The above will listen only on 127.0.0.1 at port 25555 so no one from outside of the
 system could receive events.  The same host and port must be passed to the validator
@@ -191,6 +191,11 @@ The following lines are logged:
      give the signature of transactions received on a QUIC connection by
      a given remote peer.
 
+```<TIMESTAMP> fee <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE> <LAMPORTS>```
+  - Only if ```--vote_tx``` was specified, these lines are logged.  They
+     give the fee that the tx paid when it landed in a block on chain.  Only
+     tx which landed on chain will have this line logged
+     
 ```<TIMESTAMP> leader_upcoming <SLOTS>```
   - Starting at 200 slots before a validator's upcoming leader slots, logs once
     per leader slot about the leader's slots being upcoming.  Only logs for
