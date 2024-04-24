@@ -65,6 +65,9 @@ use std::sync::Arc;
 #[derive(Default)]
 struct State
 {
+    // Leader status -- how many slots until leader
+    pub leader_status : LeaderStatus,
+
     // Failure counts
     pub failures : HashMap<IpAddr, Failures>,
 
@@ -76,6 +79,43 @@ struct State
 
     // Map from tx to the SocketAddr that submitted it
     pub txs : HashMap<Signature, SocketAddr>
+}
+
+#[derive(Default)]
+enum LeaderStatus
+{
+    // Not within 200 slots
+    #[default]
+    NotSoon,
+
+    // Within 200 slots
+    KindaSoon,
+
+    // Within 20 slots
+    Soon,
+
+    // Within 2 slots
+    VerySoon,
+
+    // Now leader
+    Leader
+}
+
+impl std::fmt::Display for LeaderStatus
+{
+    fn fmt(
+        &self,
+        f : &mut std::fmt::Formatter
+    ) -> std::fmt::Result
+    {
+        match self {
+            LeaderStatus::NotSoon => writeln!(f, "notsoon"),
+            LeaderStatus::KindaSoon => writeln!(f, "kindasoon"),
+            LeaderStatus::Soon => writeln!(f, "soon"),
+            LeaderStatus::VerySoon => writeln!(f, "verysoon"),
+            LeaderStatus::Leader => writeln!(f, "leader")
+        }
+    }
 }
 
 #[derive(Default)]
@@ -388,7 +428,7 @@ impl State
 
     pub fn exceeded(
         &mut self,
-        timestamp : u64,
+        _timestamp : u64,
         peer_addr : SocketAddr,
         stake : u64
     )
@@ -406,7 +446,7 @@ impl State
             exceeds.changed = true;
         }
         else if (exceeds.count == 100) || (now >= (exceeds.log_timestamp + 1000)) {
-            println!("{timestamp} exceeded {} {stake} {}", peer_addr.ip(), exceeds.count);
+            println!("{now} exceeded {} {stake} {}", peer_addr.ip(), exceeds.count);
             exceeds.log_timestamp = now;
             exceeds.changed = false;
             exceeds.count = 0;
@@ -499,7 +539,7 @@ impl State
         let peer_addr = SocketAddr::new(peer_addr, peer_port);
 
         if show_tx {
-            println!("{timestamp} tx {peer_addr}:{peer_port} {signature}");
+            println!("{timestamp} tx {peer_addr}:{peer_port} {signature} {}", self.leader_status);
         }
 
         // It's possible that stake() was not called because of lost events; in that case, stake will not be known
@@ -576,28 +616,45 @@ impl State
     }
 
     pub fn will_be_leader(
-        &self,
+        &mut self,
         timestamp : u64,
         slots : u8
     )
     {
         println!("{timestamp} leader_upcoming {slots}");
+
+        if slots <= 2 {
+            self.leader_status = LeaderStatus::VerySoon;
+        }
+        else if slots <= 20 {
+            self.leader_status = LeaderStatus::Soon;
+        }
+        else if slots <= 200 {
+            self.leader_status = LeaderStatus::KindaSoon;
+        }
+        else {
+            self.leader_status = LeaderStatus::NotSoon;
+        }
     }
 
     pub fn begin_leader(
-        &self,
+        &mut self,
         timestamp : u64
     )
     {
         println!("{timestamp} leader_begin");
+
+        self.leader_status = LeaderStatus::Leader;
     }
 
     pub fn end_leader(
-        &self,
+        &mut self,
         timestamp : u64
     )
     {
         println!("{timestamp} leader_end");
+
+        self.leader_status = LeaderStatus::NotSoon;
     }
 }
 
