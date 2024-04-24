@@ -1,5 +1,6 @@
 use bincode::Options;
 use crossbeam::channel::{unbounded, RecvTimeoutError};
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use solana_sdk::txingest::TxIngestMsg;
 use std::collections::{HashMap, HashSet};
@@ -430,6 +431,7 @@ impl State
         &mut self,
         _timestamp : u64,
         peer_addr : SocketAddr,
+        peer_pubkey : Option<Pubkey>,
         stake : u64
     )
     {
@@ -446,7 +448,12 @@ impl State
             exceeds.changed = true;
         }
         else if (exceeds.count == 100) || (now >= (exceeds.log_timestamp + 1000)) {
-            println!("{now} exceeded {} {stake} {}", peer_addr.ip(), exceeds.count);
+            println!(
+                "{now} exceeded {} {} {stake} {}",
+                peer_addr.ip(),
+                peer_pubkey.map(|pubkey| format!("{}", pubkey)).unwrap_or("none".to_string()),
+                exceeds.count
+            );
             exceeds.log_timestamp = now;
             exceeds.changed = false;
             exceeds.count = 0;
@@ -460,10 +467,14 @@ impl State
         &mut self,
         timestamp : u64,
         peer_addr : SocketAddr,
+        peer_pubkey : Option<Pubkey>,
         stake : u64
     )
     {
-        println!("{timestamp} started {peer_addr} {stake}");
+        println!(
+            "{timestamp} started {peer_addr} {} {stake}",
+            peer_pubkey.map(|pubkey| format!("{}", pubkey)).unwrap_or("none".to_string())
+        );
 
         // Currently the validator can send multiple stake events per QUIC connection.  It is not clear how or why
         // this happens.  These events should only be sent when a new QUIC connection is established; but they are
@@ -744,8 +755,12 @@ fn main()
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => (),
             Ok(TxIngestMsg::Failed { timestamp, peer_addr }) => state.failed(timestamp, peer_addr),
-            Ok(TxIngestMsg::Exceeded { timestamp, peer_addr, stake }) => state.exceeded(timestamp, peer_addr, stake),
-            Ok(TxIngestMsg::Stake { timestamp, peer_addr, stake }) => state.stake(timestamp, peer_addr, stake),
+            Ok(TxIngestMsg::Exceeded { timestamp, peer_addr, peer_pubkey, stake }) => {
+                state.exceeded(timestamp, peer_addr, peer_pubkey, stake)
+            },
+            Ok(TxIngestMsg::Stake { timestamp, peer_addr, peer_pubkey, stake }) => {
+                state.stake(timestamp, peer_addr, peer_pubkey, stake)
+            },
             Ok(TxIngestMsg::Pruned { timestamp, peer_addr }) => state.pruned(timestamp, peer_addr),
             Ok(TxIngestMsg::Closed { timestamp, peer_addr }) => state.closed(timestamp, peer_addr),
             Ok(TxIngestMsg::VoteTx { timestamp, peer_addr, peer_port }) => {
