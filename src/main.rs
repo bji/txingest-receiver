@@ -109,11 +109,11 @@ impl std::fmt::Display for LeaderStatus
     ) -> std::fmt::Result
     {
         match self {
-            LeaderStatus::NotSoon => writeln!(f, "notsoon"),
-            LeaderStatus::KindaSoon => writeln!(f, "kindasoon"),
-            LeaderStatus::Soon => writeln!(f, "soon"),
-            LeaderStatus::VerySoon => writeln!(f, "verysoon"),
-            LeaderStatus::Leader => writeln!(f, "leader")
+            LeaderStatus::NotSoon => write!(f, "not"),
+            LeaderStatus::KindaSoon => write!(f, "kinda"),
+            LeaderStatus::Soon => write!(f, "soon"),
+            LeaderStatus::VerySoon => write!(f, "very"),
+            LeaderStatus::Leader => write!(f, "leader")
         }
     }
 }
