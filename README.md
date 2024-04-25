@@ -1,9 +1,79 @@
+
+# Quick Start Instructions
+
+If using JITO, check out and build the txingest version of the JITO validator:
+
+```$ git clone https://github.com/bji/solana.git```
+```$ cd solana```
+```$ git checkout v1.17.31-jito_txingest```
+```$ ./cargo build --release```
+
+If *not* using JITO, check out and build the txingest version of the normal validator:
+
+```$ git clone https://github.com/bji/solana.git```
+```$ cd solana```
+```$ git checkout v1.17.31_txingest```
+```$ ./cargo build --release```
+
+Either way, the resulting solana-validator, from target/release/solana-validator, needs to be put
+onto your validator in place of the existing solana-validator binary.
+
+Also you need to ensure that an extra option is passed to the solana-validator binary.  If you do not
+include this, nothing bad will happen; the validator will operate as normally, it just won't ever try
+to connect to your txingest-receiver.
+
+The option is: ```--txingest-host HOST:PORT```.  Although you can forward events to any host, it makes
+the most sense to forward to a txingest-receiver process running on the validator itself, so assuming
+you want to use port 15151 (any unused port will do), the option would be:
+```--txingest-host 127.0.0.1:15151```.
+
+If using JITO, you must also be running your own JITO relayer, otherwise the events that indicate what
+source ip addresses transactions are coming from will never be available to you.  You must check out
+and build a slightly modified version of the JITO transaction relayer:
+
+```$ git clone https://github.com/bji/jito-relayer.git```
+```$ cd jito-relayer```
+```$ git checkout v0.1.12_txingest```
+
+Because the JITO relayer builds against the Solana SDK, and you must reference the *txingest* version
+of the SDK when building it, you must modify the Cargo.toml file in the jito-relayer source and
+update the "/path/to/your/solana" text to instead be a path to the Solana repo that you checked out
+in the first steps above.  For example if you checked it out into "/home/me/solana", then you
+would replace /path/to/your/solana with /home/me/solana.
+
+Then build the JITO relayer:
+
+```$ cargo build --release```
+
+Then you have to install it onto your validator and run it instead of the stock JITO relayer.  Just like
+with the validator, it is harmless to run these changes without having a txingest receiver running; and
+just like for the validator, you do need to add a ```--txingest-host HOST:PORT``` argument, for example
+```--txingest-host 127.0.0.1:15151```.
+
+Finally, you have to modify the Cargo.toml in the txingest-receiver repo, just like you did or would
+have done for the jito Cargo.toml: replace /path/to/your/solana with the local solana repo that you
+checked out in the first steps above.
+
+Then build the txingest-receiver:
+
+```$ cd txingest-receiver```
+```$ cargo build --release```
+
+And copy the binary onto your validator.  See the 'running' section below for instructions on how
+to run it.  It's harmless to run it before or after your validator or relayer has started; all of
+the validator, relayer, and txingest-receiver simply wait to make or receive connections when
+they are available, and operate normally otherwise.
+
 # txingest receiver
 
 This implements a simple txingest receiver.  In order to function, it requires that a Solana validator
 be patched with the txingest patch; see:
 
 https://github.com/bji/solana/tree/v1.17.31_txingest
+
+Or for JITO validators:
+
+https://github.com/bji/solana/tree/v1.17.31-jito_txingest
 
 This simple receiver will listen for connections the validator on a given port, and when connected
 to, receive events from the validator, collate them, and log details about QUIC connections and
