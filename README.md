@@ -4,15 +4,21 @@
 If using JITO, check out and build the txingest version of the JITO validator:
 
 ```$ git clone https://github.com/bji/solana.git```
+
 ```$ cd solana```
+
 ```$ git checkout v1.17.31-jito_txingest```
+
 ```$ ./cargo build --release```
 
 If *not* using JITO, check out and build the txingest version of the normal validator:
 
 ```$ git clone https://github.com/bji/solana.git```
+
 ```$ cd solana```
+
 ```$ git checkout v1.17.31_txingest```
+
 ```$ ./cargo build --release```
 
 Either way, the resulting solana-validator, from target/release/solana-validator, needs to be put
@@ -32,7 +38,9 @@ source ip addresses transactions are coming from will never be available to you.
 and build a slightly modified version of the JITO transaction relayer:
 
 ```$ git clone https://github.com/bji/jito-relayer.git```
+
 ```$ cd jito-relayer```
+
 ```$ git checkout v0.1.12_txingest```
 
 Because the JITO relayer builds against the Solana SDK, and you must reference the *txingest* version
@@ -57,6 +65,7 @@ checked out in the first steps above.
 Then build the txingest-receiver:
 
 ```$ cd txingest-receiver```
+
 ```$ cargo build --release```
 
 And copy the binary onto your validator.  See the 'running' section below for instructions on how
