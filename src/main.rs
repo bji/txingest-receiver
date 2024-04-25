@@ -57,7 +57,7 @@ use std::sync::Arc;
 
 // Logged whenever a transaction's paid fee becomes known.  This is only logged for tx that landed and that had a
 // valid fee.  The original submitter of the tx is logged.
-// timestamp fee REMOTE_ADDRESS:REMOTE_PORT signature lamports
+// timestamp fee REMOTE_ADDRESS:REMOTE_PORT signature cu_limit cu_used lamports
 
 // Logged after a connection is complete, if it submitted any tx that were dups of tx submitted by another peer
 // before it, listing all IPs that it submitted dups of
@@ -603,12 +603,14 @@ impl State
         show_tx : bool,
         timestamp : u64,
         signature : Signature,
+        cu_limit : u64,
+        cu_used : u64,
         fee : u64
     )
     {
         if let Some(sender) = self.txs.get(&signature) {
             if show_tx {
-                println!("{timestamp} fee {sender} {signature} {fee}");
+                println!("{timestamp} fee {sender} {signature} {cu_limit} {cu_used} {fee}");
             }
             let connection = self.connections.entry(sender.clone()).or_insert_with(|| {
                 let now = now_millis();
@@ -771,7 +773,9 @@ fn main()
             },
             Ok(TxIngestMsg::Forwarded { timestamp, signature }) => state.forwarded(timestamp, signature),
             Ok(TxIngestMsg::BadFee { timestamp, signature }) => state.badfee(timestamp, signature),
-            Ok(TxIngestMsg::Fee { timestamp, signature, fee }) => state.fee(show_tx, timestamp, signature, fee),
+            Ok(TxIngestMsg::Fee { timestamp, signature, cu_limit, cu_used, fee }) => {
+                state.fee(show_tx, timestamp, signature, cu_limit, cu_used, fee)
+            },
             Ok(TxIngestMsg::WillBeLeader { timestamp, slots }) => state.will_be_leader(timestamp, slots),
             Ok(TxIngestMsg::BeginLeader { timestamp }) => state.begin_leader(timestamp),
             Ok(TxIngestMsg::EndLeader { timestamp }) => state.end_leader(timestamp)
