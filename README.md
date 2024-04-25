@@ -9,6 +9,8 @@ If using JITO, check out and build the txingest version of the JITO validator:
 
 ```$ git checkout v1.17.31-jito_txingest```
 
+```$ git submodule update --init --recursive```
+
 ```$ ./cargo build --release```
 
 If *not* using JITO, check out and build the txingest version of the normal validator:
@@ -43,6 +45,8 @@ and build a slightly modified version of the JITO transaction relayer:
 
 ```$ git checkout v0.1.12_txingest```
 
+```$ git submodule update --init --recursive```
+
 Because the JITO relayer builds against the Solana SDK, and you must reference the *txingest* version
 of the SDK when building it, you must modify the Cargo.toml file in the jito-relayer source and
 update the "/path/to/your/solana" text to instead be a path to the Solana repo that you checked out
@@ -58,11 +62,15 @@ with the validator, it is harmless to run these changes without having a txinges
 just like for the validator, you do need to add a ```--txingest-host HOST:PORT``` argument, for example
 ```--txingest-host 127.0.0.1:15151```.
 
-Finally, you have to modify the Cargo.toml in the txingest-receiver repo, just like you did or would
+Then check out the txingest-receiver repo:
+
+```$ git clone https://github.com/bji/txingest-receiver.git```
+
+You have to modify the Cargo.toml in the txingest-receiver repo, just like you did or would
 have done for the jito Cargo.toml: replace /path/to/your/solana with the local solana repo that you
 checked out in the first steps above.
 
-Then build the txingest-receiver:
+Finally, build the txingest-receiver:
 
 ```$ cd txingest-receiver```
 
