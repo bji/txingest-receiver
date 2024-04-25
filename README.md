@@ -93,7 +93,7 @@ the author of txingest:
 
 # the log lines - common fields
 
-Every log line is of the form:
+Log line are generally of the form:
 
 ```<TIMESTAMP> <VERB> <PEER> <DETAILS>...```
 
@@ -102,7 +102,7 @@ event.
 
 ```<VERB>``` is always present and indicates what is being logged.
 
-```<PEER>``` is always present and identifies the remote peer by IP address, and for established
+```<PEER>``` is usually present and identifies the remote peer by IP address, and for established
 QUIC connections, also indicates the remote port.
 
 ```<DETAILS>``` are always present, but vary by event logged.  See below.
@@ -116,18 +116,21 @@ The following lines are logged:
     given remote address, whichever comes first.  ```<COUNT>``` is the number of failures for
     this remote address that occurred within the previous 10 seconds.
 
-```<TIMESTAMP> exceeded <REMOTE_ADDRESS> <STAKE> <COUNT>```
+```<TIMESTAMP> exceeded <REMOTE_ADDRESS> <PEER_PUBKEY> <STAKE> <COUNT>```
  - Logged every 100 connection establishment failures due to remote peer exceeding
     connection limits, or every 1 second for a given remote address, whichever comes
-    first.  ```<STAKE>``` is the lamports of stake of the remote peer.  NOTE that currently
+    first.  <PEER_PUBKEY> is either the pubkey of the peer, if known, or "none".
+    ``<STAKE>``` is the lamports of stake of the remote peer.  NOTE that currently
     this is always 0; this field will likely be removed soon so don't count on it.
     ```<COUNT>``` is the number of failures due to exceeded connection limits for this
     remote address that occurred within the previous 10 seconds.
 
 ```<TIMESTAMP> started <REMOTE_ADDRESS:REMOTE_PORT> <STAKE>```
-  - Logged on every new QUIC connection.  This appears to be logged multiple times
-     in a row sometimes for a given remote address/port combo, and it's not clear
-     why that happens.  ```<STAKE>``` is 0 for unstaked peers, or the lamports of stake
+  - Logged on every new QUIC connection.  It is unclear exactly how the lifetime of
+     QUIC connections are managed within the validator code base, so the timespan between
+     a "started" and "closed" or "dropped" log *may* span multiple individual QUIC
+     connections.  <PEER_PUBKEY> is either the pubkey of the peer, if known, or "none".
+     ```<STAKE>``` is 0 for unstaked peers, or the lamports of stake
      for staked peers.
 
 ```<TIMESTAMP> inactive <REMOTE_ADDRESS:REMOTE_PORT> <STAKE>```
@@ -186,15 +189,24 @@ The following lines are logged:
      the addresses of the peers that also submitted the same tx.
      ```<REMOTE_ADDRESS>```... is a space-separated list of those addresses.
 
-```<TIMESTAMP> tx <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE>```
+```<TIMESTAMP> tx <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE> <LEADER_STATUS>```
   - Only if ```--vote_tx``` was specified, these lines are logged.  They
      give the signature of transactions received on a QUIC connection by
-     a given remote peer.
+     a given remote peer.  <LEADER_STATUS> indicates whether or not the
+     validator was leader at the time the tx was received, or how soon it
+     would have been leader.  This value is logged as one of:
+     "not" - if the validator wouldn't be leader within 200 slots
+     "kinda" - if the validator will be leader in between 21 and 200 slots
+     "soon" - if the validator will be leader in between 3 and 20 slots
+     "very" - if the validator will be leader in 2 slots or less
+     "leader" - if the validator is currently leader
 
-```<TIMESTAMP> fee <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE> <LAMPORTS>```
+```<TIMESTAMP> fee <REMOTE_ADDRESS:REMOTE_PORT> <SIGNATURE> <CU_LIMIT> <CU_USED> <LAMPORTS>```
   - Only if ```--vote_tx``` was specified, these lines are logged.  They
      give the fee that the tx paid when it landed in a block on chain.  Only
-     tx which landed on chain will have this line logged
+     tx which landed on chain will have this line logged  <CU_LIMIT> is how many
+     CU the tx requested for its CU limit; <CU_USED> is how many CU the tx actually
+     used.
      
 ```<TIMESTAMP> leader_upcoming <SLOTS>```
   - Starting at 200 slots before a validator's upcoming leader slots, logs once
