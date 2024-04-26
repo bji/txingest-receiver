@@ -35,6 +35,7 @@ to connect to your txingest-receiver.
 The option is: ```--txingest-host HOST:PORT```.  Although you can forward events to any host, it makes
 the most sense to forward to a txingest-receiver process running on the validator itself, so assuming
 you want to use port 15151 (any unused port will do), the option would be:
+
 ```--txingest-host 127.0.0.1:15151```.
 
 **Build/Install JITO Relayer (optional)**
@@ -57,6 +58,7 @@ update the "/path/to/your/solana" text to instead be a path to the Solana repo t
 in the first steps above.  For example if you checked it out into "/home/me/solana", then you
 would replace /path/to/your/solana with /home/me/solana.  One easy way to do this is with the following
 command based on the following:
+
 ``` $ sed -i 's|/path/to/your|/home/me|g' Cargo.toml ```
 
 Then build the JITO relayer:
