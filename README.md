@@ -1,6 +1,8 @@
 
 # Quick Start Instructions
 
+** Build/Install Validator **
+
 If using JITO, check out and build the txingest version of the JITO validator:
 
 ```$ git clone https://github.com/bji/solana.git```
@@ -35,6 +37,8 @@ the most sense to forward to a txingest-receiver process running on the validato
 you want to use port 15151 (any unused port will do), the option would be:
 ```--txingest-host 127.0.0.1:15151```.
 
+** Build/Install JITO Relayer (optional) **
+
 If using JITO, you must also be running your own JITO relayer, otherwise the events that indicate what
 source ip addresses transactions are coming from will never be available to you.  You must check out
 and build a slightly modified version of the JITO transaction relayer:
@@ -51,7 +55,9 @@ Because the JITO relayer builds against the Solana SDK, and you must reference t
 of the SDK when building it, you must modify the Cargo.toml file in the jito-relayer source and
 update the "/path/to/your/solana" text to instead be a path to the Solana repo that you checked out
 in the first steps above.  For example if you checked it out into "/home/me/solana", then you
-would replace /path/to/your/solana with /home/me/solana.
+would replace /path/to/your/solana with /home/me/solana.  One easy way to do this is with the following
+command based on the following:
+``` $ sed -i 's|/path/to/your|/home/me|g' Cargo.toml ```
 
 Then build the JITO relayer:
 
@@ -68,7 +74,11 @@ Then check out the txingest-receiver repo:
 
 You have to modify the Cargo.toml in the txingest-receiver repo, just like you did or would
 have done for the jito Cargo.toml: replace /path/to/your/solana with the local solana repo that you
-checked out in the first steps above.
+checked out in the first steps above.  One easy way to do this is with the following
+command based on the following:
+``` $ sed -i 's|/path/to/your|/home/me|g' Cargo.toml ```
+
+** Build/Install txingest-receiver **
 
 Finally, build the txingest-receiver:
 
