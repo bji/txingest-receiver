@@ -38,7 +38,7 @@ you want to use port 15151 (any unused port will do), the option would be:
 
 ```--txingest-host 127.0.0.1:15151```.
 
-**Build/Install JITO Relayer (optional)**
+**Build/Install JITO Relayer (only if running JITO)**
 
 If using JITO, you must also be running your own JITO relayer, otherwise the events that indicate what
 source ip addresses transactions are coming from will never be available to you.  You must check out
