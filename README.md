@@ -1,7 +1,7 @@
 
 # Quick Start Instructions
 
-** Build/Install Validator **
+**Build/Install Validator**
 
 If using JITO, check out and build the txingest version of the JITO validator:
 
@@ -37,7 +37,7 @@ the most sense to forward to a txingest-receiver process running on the validato
 you want to use port 15151 (any unused port will do), the option would be:
 ```--txingest-host 127.0.0.1:15151```.
 
-** Build/Install JITO Relayer (optional) **
+**Build/Install JITO Relayer (optional)**
 
 If using JITO, you must also be running your own JITO relayer, otherwise the events that indicate what
 source ip addresses transactions are coming from will never be available to you.  You must check out
@@ -78,7 +78,7 @@ checked out in the first steps above.  One easy way to do this is with the follo
 command based on the following:
 ``` $ sed -i 's|/path/to/your|/home/me|g' Cargo.toml ```
 
-** Build/Install txingest-receiver **
+**Build/Install txingest-receiver**
 
 Finally, build the txingest-receiver:
 
